@@ -42,6 +42,10 @@
     "istanbul": "^0.4.4",
     "mocha": "^3.1.2",
     "mocha-better-spec-reporter": "^3.0.2",
-    "should": "^11.1.0"
+    "should": "^11.1.0",
+    "nmr-predictor": "0.1.0",
+    "nmr-simulation": "0.1.4",
+    "openchemlib-extended": "1.12.3",
+    "request":"2.78.0"
   }
 }
