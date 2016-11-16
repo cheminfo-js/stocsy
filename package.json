@@ -46,6 +46,7 @@
     "nmr-predictor": "0.1.0",
     "nmr-simulation": "0.1.4",
     "openchemlib-extended": "1.12.3",
-    "request":"2.78.0"
+    "request":"2.78.0",
+    "superagent":"2.3.0"
   }
 }
