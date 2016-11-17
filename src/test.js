@@ -11,12 +11,12 @@ const request = require('request');
 
 console.log(nmr.SpinSystem);
 
-var sdf = fs.readFileSync('./src/molecules/set10.sdf').toString();
+var sdf = fs.readFileSync('./src/molecules/set2.sdf').toString();
 var parser = new OCL.SDFileParser(sdf);
-var index = 0;
 var spectra = [];
 var promises = [];
 var molfiles = [];
+
 while(parser.next()) {
     let molecule = parser.getMolecule();
     let molfile = molecule.toMolfile();
@@ -30,6 +30,7 @@ while(parser.next()) {
 
 Promise.all(promises).then( function (result) {
     result.forEach((a,index) => {
+        console.log(index)
         var predictor = new Predictor("spinus")
         var prediction = predictor.predict(molfiles[index],a.text);
         const spinSystem = nmr.SpinSystem.fromPrediction(prediction);
@@ -37,18 +38,25 @@ Promise.all(promises).then( function (result) {
             frequency: 400.082470657773,
             from: 0,
             to: 11,
-            lineWidth: 1,
+            lineWidth: 1.5,
             nbPoints: 2048,
             maxClusterSize: 6
         };
         spinSystem.ensureClusterSize(options);
         var simulation = nmr.simulate1D(spinSystem, options);
+        
+        // // normalizing each spectrum to facilitate analysis
+        // var sum = simulation.reduce((a, b) => a + b, 0);
+        // for (var j = 0; j < spectrum.length; j++) {
+        //     simulation[j] /= sum;
+        // }
+    
         fs.writeFile('src/data/spectra'+index.toString(),simulation, (err) => {
             if (err) throw err;
             console.log('It\'s saved!');
         })
         spectra.push(simulation);
-        console.log("prediction", simulation.length);
+        //console.log("prediction", simulation.length);
     });
     generator(spectra,100);
 });
