@@ -38,8 +38,8 @@ Promise.all(promises).then( function (result) {
             frequency: 400.082470657773,
             from: 0,
             to: 11,
-            lineWidth: 1.5,
-            nbPoints: 2048,
+            lineWidth: 1,
+            nbPoints: 12288,
             maxClusterSize: 6
         };
         spinSystem.ensureClusterSize(options);
@@ -56,31 +56,45 @@ Promise.all(promises).then( function (result) {
             console.log('It\'s saved!');
         })
         spectra.push(simulation);
-        //console.log("prediction", simulation.length);
     });
-    generator(spectra,100);
+    // normalizing each spectrum to facilitate analysis
+    for (var i = 0; i < spectra.length; i++) {
+        var spectrum = spectra[i];
+        var sum = spectrum.reduce((a, b) => a + b*b, 0);
+        var norm = Math.sqrt(sum);
+        for (var j = 0; j < spectrum.length; j++) {
+            spectrum[j] /= norm;
+        }
+    }
+    var content = [spectra[0],spectra[1]];
+    generator(content,25,0);
+    var content = [spectra[2],spectra[1]];
+    generator(content,25,25);
+    var content = [spectra[2],spectra[0]];
+    generator(content,25,50);
+    generator(spectra,25,75);
 });
 
-function generator(spectra,Ncomb) {
-    // var Gspectra = new Array(Ncomb);
-    // var weights = new Array(Ncomb);
-    for (var i = 0; i < Ncomb; i++) {
+function generator(spectra,Ncomb,label) {
+    for (var i = label; i < label+Ncomb; i++) {
         var tmp = new Array(spectra[0].length).fill(0);
         var weigth = new Array(spectra.length);
         for(var j = 0; j < spectra.length; j++) {
             weigth[j] = Math.random();
-            // console.log(weigth[j])
+            //if (weigth[j] < 0.1) weigth[j] = 0;
             for (var k = 0; k < spectra[0].length; k++) {
                 tmp[k] += spectra[j][k]*weigth[j];
             }
         }
-        fs.writeFile('src/data/comb'+i.toString(),tmp, (err) => {
-            if (err) throw err;
-            console.log('It\'s saved!');
-        })
-        fs.writeFile('src/data/weigth'+i.toString(),weigth, (err) => {
-            if (err) throw err;
-        console.log('It\'s saved!');
-        })
+        writeFile('src/data/comb'+i.toString(),tmp);
+        writeFile('src/data/weigth'+i.toString(),weigth);
     }
 }
+
+function writeFile(path,variable) {
+    fs.writeFile(path,variable, (err) => {
+        if (err) throw err;
+        console.log('It\'s saved!');
+    });
+}
+
