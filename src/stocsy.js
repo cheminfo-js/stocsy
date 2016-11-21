@@ -14,32 +14,33 @@ for (var i = 0; i < Ncomb; i++) {
     content[i] = JSON.parse("[" + data + "]");
 }
 
-// normalizing each spectrum to facilitate analysis
-for (var i = 0; i < content.length; i++) {
-    var spectrum = content[i];
-    var sum = spectrum.reduce((a, b) => a + b*b, 0);
-    var norm = Math.sqrt(sum)
-    for (var j = 0; j < spectrum.length; j++) {
-        spectrum[j] /= norm;
-    }
-}
+// // normalizing each spectrum to facilitate analysis
+// for (var i = 0; i < content.length; i++) {
+//     var spectrum = content[i];
+//     var sum = spectrum.reduce((a, b) => a + b*b, 0);
+//     var norm = Math.sqrt(sum)
+//     for (var j = 0; j < spectrum.length; j++) {
+//         spectrum[j] /= norm;
+//     }
+// }
 
-// suppressing columns of zeros
-content = new Matrix(content).transpose();
-var columnsDeleted = [];
-var dataWhitoutZeros = [];
-for (var i = 0; i < content.rows; i++) {
-    var column = content[i];
-    if (column.reduce((a,b) => a+b,0) !== 0) {
-        dataWhitoutZeros.push(column);
-    } else columnsDeleted.push(i);
-}
-dataWhitoutZeros = new Matrix(dataWhitoutZeros).transpose();
+// // suppressing columns of zeros
+// content = new Matrix(content).transpose();
+// var columnsDeleted = [];
+// var dataWhitoutZeros = [];
+// for (var i = 0; i < content.rows; i++) {
+//     var column = content[i];
+//     if (column.reduce((a,b) => a+b,0) !== 0) {
+//         dataWhitoutZeros.push(column);
+//     } else columnsDeleted.push(i);
+// }
+// dataWhitoutZeros = new Matrix(dataWhitoutZeros).transpose();
+var dataWhitoutZeros = new Matrix(content);
 
 // writing some combinations to view
-writeFile('src/data/combWhitoutZeros1',dataWhitoutZeros[0])
-writeFile('src/data/combWhitoutZeros2',dataWhitoutZeros[1])
-writeFile('src/data/combWhitoutZeros3',dataWhitoutZeros[2])
+// writeFile('src/data/combWhitoutZeros1',dataWhitoutZeros[0])
+// writeFile('src/data/combWhitoutZeros2',dataWhitoutZeros[1])
+// writeFile('src/data/combWhitoutZeros3',dataWhitoutZeros[2])
 
 // creating covariance matrix
 var covMatrix = covMatrix(dataWhitoutZeros);
@@ -50,11 +51,11 @@ var pca_result = new PCA(covMatrix,{isCovarianceMatrix: true});
 
 // // writing some eigenvector to view
 var eigenVector = new Matrix(pca_result.getEigenvectors()).transpose()
-writeFile('src/data/eigenVector1',eigenVector[0]);
-writeFile('src/data/eigenVector2',eigenVector[1]);
-writeFile('src/data/eigenVector3',eigenVector[2]);
-writeFile('src/data/eigenVector4',eigenVector[3]);
-writeFile('src/data/eigenVector5',eigenVector[4]);
+// writeFile('src/data/eigenVector1',eigenVector[0]);
+// writeFile('src/data/eigenVector2',eigenVector[1]);
+// writeFile('src/data/eigenVector3',eigenVector[2]);
+// writeFile('src/data/eigenVector4',eigenVector[3]);
+// writeFile('src/data/eigenVector5',eigenVector[4]);
 var eigenvalue = pca_result.getEigenvalues()
 
 console.log(eigenvalue[0])
@@ -98,15 +99,15 @@ function corrMatrix(matrix) {
             corrMatrix[j][i] = corrMatrix[i][j];
         }
     }
-    // // normalize of matrix
-    // for (var i = 0; i < rows; i++) {
-    //     for (var j = i; j < rows; j++) {
-    //         if (corrMatrix[i][i] !== 0 && corrMatrix[j][j] !== 0) {
-    //             corrMatrix[i][j] = corrMatrix[i][j]/Math.sqrt(corrMatrix[i][i] * corrMatrix[j][j]);
-    //         } else corrMatrix[i][j] = 0;
-    //         corrMatrix[j][i] = corrMatrix[i][j];
-    //     }
-    // }
+    // normalize of matrix
+    for (var i = 0; i < rows; i++) {
+        for (var j = i; j < rows; j++) {
+            if (corrMatrix[i][i] !== 0 && corrMatrix[j][j] !== 0) {
+                corrMatrix[i][j] = corrMatrix[i][j]/Math.sqrt(corrMatrix[i][i] * corrMatrix[j][j]);
+            } else corrMatrix[i][j] = 0;
+            corrMatrix[j][i] = corrMatrix[i][j];
+        }
+    }
     return corrMatrix;
 }
 
@@ -114,12 +115,12 @@ function covMatrix(matrix) {
     return corrMatrix(matrix.transpose());
 }
 
-//reading each spectra suppressing columns of zeros (for debugging)
-var contentSpectra = new Array(3);
-for (var i = 0; i < 3; i++) {
-    var data = fs.readFileSync('src/data/spectra'+i).toString()
-    contentSpectra[i] = JSON.parse("[" + data + "]");
-}
+// //reading each spectra suppressing columns of zeros (for debugging)
+// var contentSpectra = new Array(3);
+// for (var i = 0; i < 3; i++) {
+//     var data = fs.readFileSync('src/data/spectra'+i).toString()
+//     contentSpectra[i] = JSON.parse("[" + data + "]");
+// }
 
 // for (var i = 0; i < contentSpectra.length; i++) {
 //     var spectrum = contentSpectra[i];
@@ -129,15 +130,15 @@ for (var i = 0; i < 3; i++) {
 //         spectrum[j] /= norm;
 //     }
 // }
-contentSpectra = new Matrix(contentSpectra).transpose();
-var spectraWhitoutZeros = [];
-for (var i = 0; i < contentSpectra.rows; i++) {
-    var column = contentSpectra[i];
-    if (column.reduce((a,b) => a+b,0) !== 0) {
-        spectraWhitoutZeros.push(column);
-    }
-}
-spectraWhitoutZeros = new Matrix(spectraWhitoutZeros).transpose();
-writeFile('src/data/spectraWhitoutZeros1',spectraWhitoutZeros[0])
-writeFile('src/data/spectraWhitoutZeros2',spectraWhitoutZeros[1])
-writeFile('src/data/spectraWhitoutZeros3',spectraWhitoutZeros[2])
+// contentSpectra = new Matrix(contentSpectra).transpose();
+// var spectraWhitoutZeros = [];
+// for (var i = 0; i < contentSpectra.rows; i++) {
+//     var column = contentSpectra[i];
+//     if (column.reduce((a,b) => a+b,0) !== 0) {
+//         spectraWhitoutZeros.push(column);
+//     }
+// }
+// spectraWhitoutZeros = new Matrix(spectraWhitoutZeros).transpose();
+// writeFile('src/data/spectraWhitoutZeros1',spectraWhitoutZeros[0])
+// writeFile('src/data/spectraWhitoutZeros2',spectraWhitoutZeros[1])
+// writeFile('src/data/spectraWhitoutZeros3',spectraWhitoutZeros[2])
