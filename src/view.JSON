@@ -1,0 +1,2291 @@
+{
+  "version": "2.73.0",
+  "grid": {
+    "layers": {
+      "Default layer": {
+        "name": "Default layer"
+      }
+    },
+    "xWidth": 10,
+    "yHeight": 10
+  },
+  "modules": [
+    {
+      "url": "modules/types/client_interaction/code_executor/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "display": [
+                [
+                  "editor",
+                  "buttons"
+                ]
+              ],
+              "execOnLoad": [
+                []
+              ],
+              "asyncAwait": [
+                [
+                  "top"
+                ]
+              ],
+              "script": [
+                "var NbEigenVectors = 6;\nswitch (this.action.name) {\n    case 'load' :\n        const c = new cdb();\n        var promisesArray = [\n            c.get('upload/set10.sdf'),\n        ];\n        \n        Promise.all(promisesArray).then(function(data) {\n            // console.log(data)\n            var parser = new OCL.SDFileParser(data.toString());\n            var molfiles = [];\n            while(parser.next()) {\n                let molecule = parser.getMolecule();\n                let molfile = molecule.toMolfile();\n                molfiles.push({mol:molfile});\n            }\n            API.createData('molfiles', molfiles);\n        });\n        break;\n    case 'generate' :\n        var molfiles = API.getData('molfiles');\n        console.log(molfiles)\n        var spectra = [], promises = [];\n        molfiles.forEach((molfile) => {\n            promises.push(agent.post(\"https://www.nmrdb.org/service/predictor\")\n                .type('form')\n                .send({molfile: molfile.mol+\"\"})\n            );\n        })\n        \n        Promise.all(promises).then( function (result) {\n            result.forEach((a,index) => {\n                var predictor = new Predictor(\"spinus\");\n                var prediction = predictor.predict(molfiles[index].mol+\"\",a.text);\n                const spinSystem = nmr.SpinSystem.fromPrediction(prediction);\n                var options = {\n                    frequency: 400.082470657773,\n                    from: 0,\n                    to: 11,\n                    lineWidth: 1,\n                    nbPoints: 256*3,\n                    maxClusterSize: 6\n                };\n                spinSystem.ensureClusterSize(options);\n                var simulation = nmr.simulate1D(spinSystem, options);\n                molfiles[index].spectrum = simulation;\n                spectra.push(simulation);\n            });\n            API.createData('molfiles', molfiles);\n            \n            // normalizing each spectrum to facilitate analysis\n            for (var i = 0; i < spectra.length; i++) {\n                var spectrum = spectra[i];\n                var sum = spectrum.reduce((a, b) => a + b*b, 0);\n                var norm = Math.sqrt(sum);  \n                for (var j = 0; j < spectrum.length; j++) {\n                    spectrum[j] /= norm;\n                }\n            }\n            \n            var dataSet = [], weights = [];\n            \n            for (var i = 0; i < 60  ; i++) {\n                var value = Math.random();\n                if (value <= 0.23) var spectraTMP = [spectra[0],spectra[1]];\n                if (value > 0.23 && value <= 0.5) var spectraTMP = [spectra[0],spectra[2]];\n                if (value > 0.5 && value <= 0.75) var spectraTMP = [spectra[1],spectra[2]];\n                if (value > 0.75) var spectraTMP = [spectra[0],spectra[1],spectra[2]];\n                var dataSetTMP = generator(spectraTMP,1,0);\n                dataSet = stack(dataSet,dataSetTMP.combinations);\n                weights = stack(weights,dataSetTMP.weights);\n            }\n            API.createData('dataSet',dataSet);\n            API.createData('weights', weights);\n        });\n        break;\n        \n    case 'covMatrix' :\n        var Matrix = ML.Matrix;\n        var PCA = ML.Stat.PCA;\n        var content = API.getData('dataSet');\n        \n        // content = new Matrix(content).transpose();\n        // var columnsDeleted = [];\n        // var dataWhitoutZeros = [];\n        // for (var i = 0; i < content.rows; i++) {\n        //     var column = content[i];\n        //     if (sum(column) !== 0) {\n        //         dataWhitoutZeros.push(column);\n        //     } else columnsDeleted.push(i);\n        // }\n        \n        // dataWhitoutZeros = new Matrix(dataWhitoutZeros).transpose();\n        var dataWhitoutZeros = new Matrix(content);\n        // normalizing each spectrum to facilitate analysis\n        for (var i = 0; i < dataWhitoutZeros.length; i++) {\n            var spectrum = dataWhitoutZeros[i];\n            var norm = Math.sqrt(sum(spectrum));\n            for (var j = 0; j < spectrum.length; j++) {\n                spectrum[j] /= norm;\n            }\n        }\n        \n        //creating covariance matrix\n        var covMatrix = covMatrix(dataWhitoutZeros);\n\n        var pca_result = new PCA(covMatrix,{isCovarianceMatrix: true});\n        var eigenVectors = new Array(NbEigenVectors);\n        \n        for (var i = 0; i < NbEigenVectors; i++) {\n            eigenVectors[i] = {\n                    eigenVector:pca_result.getEigenvectors().transpose()[i],\n                    eigenValue:pca_result.getEigenvalues()[i]\n            }\n        }\n        \n        API.createData('eigenVectors',eigenVectors);\n        API.createData('covMatrix',covMatrix.to2DArray());\n        API.createData('dataSetWihtoutZeros',dataWhitoutZeros.to2DArray());\n        console.log('resolved');\n        break;\n}\n\n\n\n// generation of dataSet by combination of spectra\nfunction generator(spectra,Ncomb,threshold) {\n    var weights = new Array(Ncomb);\n    var combinations = new Array(Ncomb);\n    for (var i = 0; i < Ncomb; i++) {\n        var tmp = new Array(spectra[0].length).fill(0);\n        var weight = new Array(spectra.length);\n        for(var j = 0; j < spectra.length; j++) {\n            weight[j] = Math.random();\n            if (Math.random() > threshold) {\n                for (var k = 0; k < spectra[0].length; k++) {\n                    tmp[k] += spectra[j][k]*weight[j];\n                } \n            } else weight[j] = 0;\n        }\n        weights[i] = weight;\n        combinations[i] = tmp;\n    }\n    return {weights:weights,combinations:combinations};\n}\n\nfunction dotProduct(vector1, vector2) {\n    var tmp = 0;\n    if (vector1.length == vector2.length) {\n        for (var i = 0; i < vector1.length; i++) {\n            tmp += vector1[i]*vector2[i];\n        }\n        return tmp;\n    } else {\n        error('vectors length not match');\n    }\n}\n\nfunction sum(vector) {\n    var sum = 0;\n    for (var i = 0 ; i < vector.length; i++) sum += vector[i];\n    return sum;\n}\n\nfunction corrMatrix(matrix) {\n    var rows = matrix.rows;\n    console.log(rows);\n    var corrMatrix = new Matrix(rows, rows);\n    for (var i = 0; i < rows; i++) {\n        for (var j = i; j < rows; j++) {\n            corrMatrix[i][j] = dotProduct(matrix[i],matrix[j]);\n            corrMatrix[j][i] = corrMatrix[i][j];\n        }\n    }\n    // normalize of matrix\n    for (var i = 0; i < rows; i++) {\n        for (var j = i; j < rows; j++) {\n            if (corrMatrix[i][i] !== 0 && corrMatrix[j][j] !== 0) {\n                corrMatrix[i][j] = corrMatrix[i][j]/Math.sqrt(corrMatrix[i][i] * corrMatrix[j][j]);\n            } else corrMatrix[i][j] = 0;\n            corrMatrix[j][i] = corrMatrix[i][j];\n        }\n    }\n    return corrMatrix;\n}\n\nfunction covMatrix(matrix) {\n    return corrMatrix(matrix.transpose());\n}\n\nfunction stack(mainV,secondV) {\n    for (var i = 0; i < secondV.length; i++) {\n        mainV.push(secondV[i]);\n    }\n    return mainV;\n}"
+              ]
+            }
+          ],
+          "libs": [
+            [
+              {
+                "lib": "superagent",
+                "alias": "agent"
+              },
+              {
+                "lib": "https://www.lactame.com/lib/nmr-predictor/0.1.0/nmr-predictor.min.js",
+                "alias": "Predictor"
+              },
+              {
+                "lib": "https://www.lactame.com/lib/openchemlib/4.6.2/openchemlib-full.js",
+                "alias": "OCL"
+              },
+              {
+                "lib": "https://www.lactame.com/lib/nmr-simulation/0.1.4/nmr-simulation.js",
+                "alias": "nmr"
+              },
+              {
+                "lib": "src/util/couchdbAttachments",
+                "alias": "cdb"
+              },
+              {
+                "lib": "https://www.lactame.com/lib/ml/1.4.0/ml.js",
+                "alias": "ML"
+              }
+            ]
+          ],
+          "buttons": [
+            [
+              {
+                "name": "button1",
+                "label": "Execute",
+                "hide": []
+              }
+            ]
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 17.000000143051146,
+            "top": 86.00000762939453
+          },
+          "size": {
+            "width": 72.94,
+            "height": 55.04
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 16,
+      "vars_in": [
+        {}
+      ],
+      "actions_in": [
+        {
+          "rel": "execute",
+          "name": "load"
+        },
+        {
+          "rel": "execute",
+          "name": "generate"
+        },
+        {
+          "rel": "execute",
+          "name": "covMatrix"
+        }
+      ],
+      "title": "",
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/client_interaction/button_action/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "toggle": [
+                "click"
+              ],
+              "label": [
+                "load"
+              ],
+              "onLabel": [
+                "Toggle action off"
+              ],
+              "offLabel": [
+                "Toggle action on"
+              ],
+              "title": [
+                ""
+              ],
+              "onColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "offColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "startState": [
+                "off"
+              ],
+              "text": [
+                null
+              ],
+              "askConfirm": [
+                []
+              ],
+              "confirmText": [
+                "Are you sure?"
+              ],
+              "okLabel": [
+                "Ok"
+              ],
+              "cancelLabel": [
+                "Cancel"
+              ],
+              "content": [
+                ""
+              ],
+              "contentType": [
+                "content"
+              ],
+              "maskOpacity": [
+                0.6
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 0,
+            "top": 0
+          },
+          "size": {
+            "width": 8,
+            "height": 3
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 17,
+      "vars_in": [],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "event": "onClick",
+          "rel": "actionText",
+          "jpath": [],
+          "name": "load"
+        }
+      ],
+      "title": "",
+      "vars_out": [],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/client_interaction/button_action/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "toggle": [
+                "click"
+              ],
+              "label": [
+                "generate"
+              ],
+              "onLabel": [
+                "Toggle action off"
+              ],
+              "offLabel": [
+                "Toggle action on"
+              ],
+              "title": [
+                ""
+              ],
+              "onColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "offColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "startState": [
+                "off"
+              ],
+              "text": [
+                null
+              ],
+              "askConfirm": [
+                []
+              ],
+              "confirmText": [
+                "Are you sure?"
+              ],
+              "okLabel": [
+                "Ok"
+              ],
+              "cancelLabel": [
+                "Cancel"
+              ],
+              "content": [
+                ""
+              ],
+              "contentType": [
+                "content"
+              ],
+              "maskOpacity": [
+                0.6
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 5,
+            "top": 0
+          },
+          "size": {
+            "width": 12,
+            "height": 3
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 18,
+      "vars_in": [],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "event": "onClick",
+          "rel": "actionText",
+          "jpath": [],
+          "name": "generate"
+        }
+      ],
+      "title": "",
+      "vars_out": [],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/science/spectra/spectra_displayer/",
+      "configuration": {
+        "sections": {
+          "graph": [
+            {
+              "sections": {},
+              "groups": {
+                "graph": [
+                  {
+                    "url": [
+                      ""
+                    ],
+                    "zoom": [
+                      "x"
+                    ],
+                    "wheelAction": [
+                      "zoomY"
+                    ],
+                    "wheelbaseline": [
+                      0
+                    ],
+                    "fullOut": [
+                      "both"
+                    ],
+                    "legend": [
+                      null
+                    ],
+                    "legendOptions": [
+                      [
+                        "isSerieHideable",
+                        "isSerieSelectable"
+                      ]
+                    ],
+                    "mouseTracking": [
+                      []
+                    ],
+                    "selectScatter": [
+                      []
+                    ],
+                    "independantYZoom": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "axis": [
+            {
+              "sections": {},
+              "groups": {
+                "xAxis": [
+                  {
+                    "checkboxes": [
+                      [
+                        "display"
+                      ]
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "axismodification": [
+                      "none"
+                    ]
+                  }
+                ],
+                "yAxis": [
+                  {
+                    "checkboxes": [
+                      []
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "fitToAxisOnFromTo": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "variables": [
+            {
+              "sections": {},
+              "groups": {
+                "variables": [
+                  [
+                    {
+                      "variable": "spectrum0",
+                      "axis": "1",
+                      "adaptTo": "none",
+                      "plotcolor": [
+                        0,
+                        0,
+                        0,
+                        1
+                      ],
+                      "strokewidth": "1",
+                      "strokestyle": "1",
+                      "plotcontinuous": "continuous",
+                      "peakpicking": [],
+                      "markers": [],
+                      "markerShape": "1",
+                      "markerSize": 2,
+                      "normalize": "none",
+                      "optimizeSlots": [],
+                      "degrade": 0,
+                      "monotoneous": [],
+                      "tracking": []
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        "groups": {}
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 91.0000054359436,
+            "top": 47.00000076293945
+          },
+          "size": {
+            "width": 58.04,
+            "height": 22.94
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 19,
+      "vars_in": [
+        {
+          "rel": "xArray",
+          "name": "spectrum1"
+        },
+        {
+          "rel": "xArray",
+          "name": "spectrum0"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "title": "",
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/client_interaction/button_action/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "toggle": [
+                "click"
+              ],
+              "label": [
+                "comp covMatrix"
+              ],
+              "onLabel": [
+                "Toggle action off"
+              ],
+              "offLabel": [
+                "Toggle action on"
+              ],
+              "title": [
+                ""
+              ],
+              "onColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "offColor": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              ],
+              "startState": [
+                "off"
+              ],
+              "text": [
+                null
+              ],
+              "askConfirm": [
+                []
+              ],
+              "confirmText": [
+                "Are you sure?"
+              ],
+              "okLabel": [
+                "Ok"
+              ],
+              "cancelLabel": [
+                "Cancel"
+              ],
+              "content": [
+                ""
+              ],
+              "contentType": [
+                "content"
+              ],
+              "maskOpacity": [
+                0.6
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 13,
+            "top": 0
+          },
+          "size": {
+            "width": 13,
+            "height": 3
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 20,
+      "vars_in": [],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "event": "onClick",
+          "rel": "actionText",
+          "jpath": [],
+          "name": "covMatrix"
+        }
+      ],
+      "title": "",
+      "vars_out": [],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/client_interaction/code_executor/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "display": [
+                [
+                  "editor",
+                  "buttons"
+                ]
+              ],
+              "execOnLoad": [
+                []
+              ],
+              "asyncAwait": [
+                [
+                  "top"
+                ]
+              ],
+              "script": [
+                "console.log(Math.random())"
+              ]
+            }
+          ],
+          "libs": [
+            [
+              {
+                "lib": "https://www.lactame.com/lib/ml/1.4.0/ml.js",
+                "alias": "ML"
+              }
+            ]
+          ],
+          "buttons": [
+            [
+              {
+                "name": "button1",
+                "label": "Execute",
+                "hide": []
+              }
+            ]
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 106.00001082420349,
+            "top": 96.00000305175782
+          },
+          "size": {
+            "width": 30.04,
+            "height": 22.04
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 21,
+      "vars_in": [
+        {}
+      ],
+      "actions_in": [
+        {}
+      ],
+      "title": "",
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/edition/slick_grid/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "slickCheck": [
+                [
+                  "enableCellNavigation",
+                  "rowNumbering",
+                  "forceFitColumns",
+                  "highlightScroll",
+                  "editable"
+                ]
+              ],
+              "autoColumns": [
+                []
+              ],
+              "toolbar": [
+                []
+              ],
+              "colorjpath": [
+                []
+              ],
+              "slick.defaultColumnWidth": [
+                null
+              ],
+              "slick.rowHeight": [
+                null
+              ],
+              "slick.headerRowHeight": [
+                30
+              ],
+              "slick.selectionModel": [
+                "row"
+              ],
+              "idProperty": [
+                ""
+              ],
+              "filterType": [
+                "pref"
+              ],
+              "filterRow": [
+                "// Documentation: https://github.com/NPellet/visualizer/blob/87ba3af17e07f6766c266385c41b177d5094150b/src/modules/types/edition/slick_grid/view.js#L1253-L1279"
+              ],
+              "customJpaths": [
+                ""
+              ]
+            }
+          ],
+          "cols": [
+            [
+              {
+                "name": "with eigenValues",
+                "jpath": [
+                  "eigenValue"
+                ],
+                "editor": "number",
+                "forceType": "",
+                "formatter": "typerenderer",
+                "visibility": "both",
+                "rendererOptions": "toFixed:2",
+                "editorOptions": "",
+                "hideColumn": []
+              }
+            ]
+          ],
+          "actionCols": [
+            [
+              {
+                "backgroundColor": [
+                  255,
+                  255,
+                  255,
+                  1
+                ],
+                "color": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "position": "end",
+                "clickMode": "text"
+              }
+            ]
+          ],
+          "groupings": [
+            [
+              {
+                "getter": []
+              }
+            ]
+          ],
+          "actionOutButtons": [
+            [
+              {}
+            ]
+          ],
+          "data": [
+            {
+              "saveInView": [
+                []
+              ],
+              "varname": [
+                ""
+              ],
+              "data": [
+                "[]"
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 0,
+            "top": 56.000003814697266
+          },
+          "size": {
+            "width": 10.040000000000001,
+            "height": 32.04
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "eigenVectors",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 22,
+      "vars_in": [
+        {
+          "rel": "list",
+          "name": "eigenVectors"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "title": "eigenVectors",
+      "vars_out": [
+        {
+          "event": "onRowActive",
+          "rel": "row",
+          "jpath": [
+            "eigenVector"
+          ],
+          "name": "eigenVector1"
+        },
+        {
+          "event": "onHover",
+          "rel": "row",
+          "jpath": [
+            "eigenVector"
+          ],
+          "name": "eigenVector2"
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              []
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 12
+    },
+    {
+      "url": "modules/types/chart/advanced/canvas_matrix/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "highcontrast": [
+                [
+                  "true"
+                ]
+              ],
+              "color": [
+                [
+                  243,
+                  242,
+                  220,
+                  1
+                ],
+                [
+                  0,
+                  16,
+                  242,
+                  1
+                ],
+                [
+                  254,
+                  0,
+                  0,
+                  1
+                ],
+                [
+                  15,
+                  0,
+                  245,
+                  1
+                ],
+                [
+                  243,
+                  255,
+                  5,
+                  1
+                ],
+                [
+                  15,
+                  248,
+                  0,
+                  1
+                ],
+                [
+                  255,
+                  5,
+                  220,
+                  1
+                ],
+                [
+                  24,
+                  252,
+                  255,
+                  1
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 91.0000054359436,
+            "top": 0
+          },
+          "size": {
+            "width": 58.04,
+            "height": 46.04
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        },
+        "Admin": {
+          "position": {
+            "left": 15,
+            "top": 1
+          },
+          "size": {
+            "width": 81,
+            "height": 28
+          },
+          "zIndex": 0,
+          "display": false,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Admin"
+        }
+      },
+      "id": 23,
+      "vars_in": [
+        {
+          "rel": "matrix",
+          "name": "covMatrix"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "title": "",
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/chart/advanced/canvas_matrix/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "highcontrast": [
+                [
+                  "true"
+                ]
+              ],
+              "color": [
+                [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                [
+                  0,
+                  16,
+                  242,
+                  1
+                ],
+                [
+                  254,
+                  0,
+                  0,
+                  1
+                ],
+                [
+                  15,
+                  0,
+                  245,
+                  1
+                ],
+                [
+                  243,
+                  255,
+                  5,
+                  1
+                ],
+                [
+                  15,
+                  248,
+                  0,
+                  1
+                ],
+                [
+                  255,
+                  5,
+                  220,
+                  1
+                ],
+                [
+                  24,
+                  252,
+                  255,
+                  1
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 17.000000143051146,
+            "top": 0
+          },
+          "size": {
+            "width": 73,
+            "height": 28
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        },
+        "Admin": {
+          "position": {
+            "left": 15,
+            "top": 1
+          },
+          "size": {
+            "width": 81,
+            "height": 28
+          },
+          "zIndex": 0,
+          "display": false,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Admin"
+        }
+      },
+      "id": 24,
+      "vars_in": [
+        {
+          "rel": "matrix",
+          "name": "dataSetWihtoutZeros"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "title": "",
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "event": "onPixelHover",
+          "rel": "fullRow",
+          "jpath": [],
+          "name": "row"
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/science/spectra/spectra_displayer/",
+      "configuration": {
+        "sections": {
+          "graph": [
+            {
+              "sections": {},
+              "groups": {
+                "graph": [
+                  {
+                    "url": [
+                      ""
+                    ],
+                    "zoom": [
+                      "none"
+                    ],
+                    "wheelAction": [
+                      "none"
+                    ],
+                    "wheelbaseline": [
+                      0
+                    ],
+                    "fullOut": [
+                      "both"
+                    ],
+                    "legend": [
+                      null
+                    ],
+                    "legendOptions": [
+                      [
+                        "isSerieHideable",
+                        "isSerieSelectable"
+                      ]
+                    ],
+                    "mouseTracking": [
+                      []
+                    ],
+                    "selectScatter": [
+                      []
+                    ],
+                    "independantYZoom": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "axis": [
+            {
+              "sections": {},
+              "groups": {
+                "xAxis": [
+                  {
+                    "checkboxes": [
+                      [
+                        "display"
+                      ]
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "axismodification": [
+                      "none"
+                    ]
+                  }
+                ],
+                "yAxis": [
+                  {
+                    "checkboxes": [
+                      []
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "fitToAxisOnFromTo": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "variables": [
+            {
+              "sections": {},
+              "groups": {
+                "variables": [
+                  [
+                    {
+                      "variable": "row",
+                      "axis": "0",
+                      "adaptTo": "none",
+                      "plotcolor": [
+                        1,
+                        1,
+                        255,
+                        1
+                      ],
+                      "strokewidth": "1",
+                      "strokestyle": "1",
+                      "plotcontinuous": "continuous",
+                      "peakpicking": [],
+                      "markers": [],
+                      "markerShape": "1",
+                      "markerSize": 2,
+                      "normalize": "none",
+                      "optimizeSlots": [],
+                      "degrade": 0,
+                      "monotoneous": [],
+                      "tracking": []
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        "groups": {}
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 17.000000143051146,
+            "top": 29.000000762939454
+          },
+          "size": {
+            "width": 73,
+            "height": 17
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 25,
+      "vars_in": [
+        {
+          "rel": "xArray",
+          "name": "row"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "title": "",
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/edition/slick_grid/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "slickCheck": [
+                [
+                  "enableCellNavigation",
+                  "rowNumbering",
+                  "forceFitColumns",
+                  "highlightScroll",
+                  "editable"
+                ]
+              ],
+              "autoColumns": [
+                []
+              ],
+              "toolbar": [
+                []
+              ],
+              "colorjpath": [
+                []
+              ],
+              "slick.defaultColumnWidth": [
+                null
+              ],
+              "slick.rowHeight": [
+                "90"
+              ],
+              "slick.headerRowHeight": [
+                50
+              ],
+              "slick.selectionModel": [
+                "row"
+              ],
+              "idProperty": [
+                ""
+              ],
+              "filterType": [
+                "pref"
+              ],
+              "filterRow": [
+                "// Documentation: https://github.com/NPellet/visualizer/blob/87ba3af17e07f6766c266385c41b177d5094150b/src/modules/types/edition/slick_grid/view.js#L1253-L1279"
+              ],
+              "customJpaths": [
+                ""
+              ]
+            }
+          ],
+          "cols": [
+            [
+              {
+                "name": "molecule",
+                "jpath": [
+                  "mol"
+                ],
+                "editor": "none",
+                "forceType": "mol2d",
+                "formatter": "typerenderer",
+                "visibility": "both",
+                "rendererOptions": "",
+                "editorOptions": "",
+                "hideColumn": []
+              }
+            ]
+          ],
+          "actionCols": [
+            [
+              {
+                "backgroundColor": [
+                  255,
+                  255,
+                  255,
+                  1
+                ],
+                "color": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "position": "end",
+                "clickMode": "text"
+              }
+            ]
+          ],
+          "groupings": [
+            [
+              {
+                "getter": []
+              }
+            ]
+          ],
+          "actionOutButtons": [
+            [
+              {}
+            ]
+          ],
+          "data": [
+            {
+              "saveInView": [
+                []
+              ],
+              "varname": [
+                ""
+              ],
+              "data": [
+                "[]"
+              ]
+            }
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 0,
+            "top": 17.000000762939454
+          },
+          "size": {
+            "width": 16,
+            "height": 37
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 26,
+      "vars_in": [
+        {
+          "rel": "list",
+          "name": "molfiles"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "title": "",
+      "vars_out": [
+        {
+          "event": "onRowActive",
+          "rel": "row",
+          "jpath": [
+            "spectrum"
+          ],
+          "name": "spectrum0"
+        },
+        {
+          "event": "onHover",
+          "rel": "row",
+          "jpath": [
+            "spectrum"
+          ],
+          "name": "spectrum1"
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              []
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/client_interaction/dragdrop/",
+      "configuration": {
+        "sections": {},
+        "groups": {
+          "group": [
+            {
+              "label": [
+                "Drop your file here"
+              ],
+              "dragoverlabel": [
+                null
+              ],
+              "hoverlabel": [
+                null
+              ],
+              "getusermedia": [
+                []
+              ],
+              "capture": [
+                "none"
+              ]
+            }
+          ],
+          "vars": [
+            [
+              {
+                "filter": "ext",
+                "extension": "*",
+                "filetype": "text",
+                "type": "",
+                "variable": "file"
+              }
+            ]
+          ],
+          "string_general": [
+            {
+              "askFilename": [
+                []
+              ]
+            }
+          ],
+          "string": [
+            [
+              {
+                "filter": "ext",
+                "extension": "*",
+                "type": "",
+                "variable": "str"
+              }
+            ]
+          ],
+          "photo": [
+            [
+              {
+                "variable": "photo"
+              }
+            ]
+          ]
+        }
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 0,
+            "top": 3
+          },
+          "size": {
+            "width": 16,
+            "height": 13
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": false,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 27,
+      "title": "",
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_in": [],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ],
+      "zindex": 1
+    },
+    {
+      "url": "modules/types/science/spectra/spectra_displayer/",
+      "configuration": {
+        "sections": {
+          "graph": [
+            {
+              "sections": {},
+              "groups": {
+                "graph": [
+                  {
+                    "url": [
+                      ""
+                    ],
+                    "zoom": [
+                      "none"
+                    ],
+                    "wheelAction": [
+                      "none"
+                    ],
+                    "wheelbaseline": [
+                      0
+                    ],
+                    "fullOut": [
+                      "both"
+                    ],
+                    "legend": [
+                      null
+                    ],
+                    "legendOptions": [
+                      [
+                        "isSerieHideable",
+                        "isSerieSelectable"
+                      ]
+                    ],
+                    "mouseTracking": [
+                      []
+                    ],
+                    "selectScatter": [
+                      []
+                    ],
+                    "independantYZoom": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "axis": [
+            {
+              "sections": {},
+              "groups": {
+                "xAxis": [
+                  {
+                    "checkboxes": [
+                      [
+                        "display"
+                      ]
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "axismodification": [
+                      "none"
+                    ]
+                  }
+                ],
+                "yAxis": [
+                  {
+                    "checkboxes": [
+                      []
+                    ],
+                    "label": [
+                      ""
+                    ],
+                    "beforeSpacing": [
+                      "0"
+                    ],
+                    "afterSpacing": [
+                      0
+                    ],
+                    "min": [
+                      ""
+                    ],
+                    "max": [
+                      ""
+                    ],
+                    "nbTicksPrimary": [
+                      5
+                    ],
+                    "fitToAxisOnFromTo": [
+                      []
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "variables": [
+            {
+              "sections": {},
+              "groups": {
+                "variables": [
+                  [
+                    {
+                      "variable": "",
+                      "axis": "0",
+                      "adaptTo": "none",
+                      "plotcolor": [
+                        1,
+                        1,
+                        255,
+                        1
+                      ],
+                      "strokewidth": "1",
+                      "strokestyle": "1",
+                      "plotcontinuous": "continuous",
+                      "peakpicking": [],
+                      "markers": [],
+                      "markerShape": "1",
+                      "markerSize": 2,
+                      "normalize": "none",
+                      "optimizeSlots": [],
+                      "degrade": 0,
+                      "monotoneous": [],
+                      "tracking": []
+                    }
+                  ]
+                ]
+              }
+            }
+          ]
+        },
+        "groups": {}
+      },
+      "layers": {
+        "Default layer": {
+          "position": {
+            "left": 91.00000472068787,
+            "top": 71.00000305175782
+          },
+          "size": {
+            "width": 58.04,
+            "height": 22.94
+          },
+          "zIndex": 0,
+          "display": true,
+          "title": "",
+          "bgColor": [
+            255,
+            255,
+            255,
+            0
+          ],
+          "wrapper": true,
+          "created": true,
+          "name": "Default layer"
+        }
+      },
+      "id": 28,
+      "vars_in": [
+        {
+          "rel": "xArray",
+          "name": "eigenVector1"
+        }
+      ],
+      "actions_in": [
+        {}
+      ],
+      "actions_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "vars_out": [
+        {
+          "jpath": []
+        }
+      ],
+      "title": "",
+      "toolbar": {
+        "custom": [
+          [
+            {
+              "title": "",
+              "icon": "",
+              "action": "",
+              "position": "begin"
+            }
+          ]
+        ],
+        "common": [
+          {
+            "toolbar": [
+              [
+                "Open Preferences"
+              ]
+            ]
+          }
+        ]
+      },
+      "css": [
+        {
+          "fontSize": [
+            ""
+          ],
+          "fontFamily": [
+            ""
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": [
+    {
+      "varname": "spectra",
+      "jpath": [
+        "spectra"
+      ]
+    },
+    {
+      "varname": "spectraList",
+      "jpath": [
+        "spectraList"
+      ]
+    }
+  ],
+  "aliases": [],
+  "pouchvariables": [],
+  "configuration": {
+    "title": "STOCSY"
+  }
+}
