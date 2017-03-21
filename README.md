@@ -6,7 +6,7 @@
   [![David deps][david-image]][david-url]
   [![npm download][download-image]][download-url]
   
-Implementation of the Statistical Total Correlation Spectroscopy( STCOSY)
+Implementation of the Statistical Total Correlation Spectroscopy( STOCSY)
 
 ## Installation
 
