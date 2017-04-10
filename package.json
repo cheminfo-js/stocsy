@@ -1,21 +1,12 @@
 {
   "name": "stocsy",
   "version": "0.0.1",
-  "description": "Implementation of the Statistical Total Correlation Spectroscopy( STCOSY)",
+  "description": "Implementation of the Statistical Total Correlation Spectroscopy(STOCSY)",
   "main": "./src/index.js",
   "files": [
     "runkit.js",
     "src"
   ],
-  "scripts": {
-    "eslint": "eslint src test",
-    "eslint-fix": "npm run eslint -- --fix",
-    "test": "npm run test-mocha && npm run eslint",
-    "test-cov": "istanbul cover node_modules/.bin/_mocha -- --require should --reporter dot --recursive",
-    "test-travis": "istanbul cover node_modules/.bin/_mocha --report lcovonly -- --require should --reporter dot --recursive",
-    "test-mocha": "mocha --require should --reporter mocha-better-spec-reporter",
-    "build": "cheminfo build"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/cheminfo-js/stocsy.git"
@@ -34,6 +25,15 @@
   },
   "runkitExampleFilename": "./runkit.js",
   "homepage": "https://github.com/cheminfo-js/stocsy#readme",
+  "scripts": {
+    "eslint": "eslint src test",
+    "eslint-fix": "npm run eslint -- --fix",
+    "test": "npm run test-mocha && npm run eslint",
+    "test-cov": "istanbul cover node_modules/.bin/_mocha -- --require should --reporter dot --recursive",
+    "test-travis": "istanbul cover node_modules/.bin/_mocha --report lcovonly -- --require should --reporter dot --recursive",
+    "test-mocha": "mocha --require should --reporter mocha-better-spec-reporter",
+    "build": "cheminfo build"
+  },
   "devDependencies": {
     "cheminfo-tools": "^1.5.0",
     "eslint": "^3.4.0",
@@ -42,13 +42,13 @@
     "istanbul": "^0.4.4",
     "mocha": "^3.1.2",
     "mocha-better-spec-reporter": "^3.0.2",
-    "should": "^11.1.0",
-    "nmr-predictor": "0.1.0",
-    "nmr-simulation": "0.1.4",
-    "openchemlib-extended": "1.12.3",
-    "request": "2.78.0",
-    "superagent": "2.3.0",
-    "ml-matrix": "2.1.0",
-    "ml-pca": "1.1.2"
+    "openchemlib-extended": "1.12.3"
+  },
+  "dependencies": {
+    "ml-pca": "^1.1.2",
+    "ml-matrix": "^2.1.0",
+    "nmr-predictor": "^0.1.0",
+    "nmr-simulation": "^0.1.4",
+    "brukerconverter": "^1.0.1"
   }
 }
